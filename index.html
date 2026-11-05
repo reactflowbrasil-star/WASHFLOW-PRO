@@ -6,6 +6,11 @@
 <meta name="theme-color" content="#0b1220" />
 <meta name="description" content="WASHFLOW PRO — gestão inteligente de lavajatos: frota, fila de lavagem, QA, financeiro e app do lavador." />
 <title>WASHFLOW PRO — Gestão de Lavajatos</title>
+<script>
+  const appBase = document.createElement('base');
+  appBase.href = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
+  document.head.append(appBase);
+</script>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="assets/icons/icon-192.png" sizes="192x192" />
 <link rel="apple-touch-icon" href="assets/icons/icon-192.png" />
