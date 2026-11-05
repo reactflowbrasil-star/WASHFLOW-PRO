@@ -1,0 +1,27 @@
+{
+  "name": "WASHFLOW PRO — Gestão de Lavajatos",
+  "short_name": "WASHFLOW",
+  "description": "Gestão inteligente de frota, fila de lavagem, QA, leitor de placas, financeiro e app do lavador.",
+  "id": "/washflow-pro/",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#070d18",
+  "theme_color": "#0b1220",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Nova lavagem", "short_name": "Nova OS", "url": "./index.html#/fila" },
+    { "name": "Fila de lavagem", "short_name": "Fila", "url": "./index.html#/fila" },
+    { "name": "Financeiro", "short_name": "Financeiro", "url": "./index.html#/financeiro" },
+    { "name": "Ler placa", "short_name": "Placa", "url": "./index.html#/dashboard" }
+  ]
+}
