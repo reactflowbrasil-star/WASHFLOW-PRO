@@ -772,6 +772,7 @@
     if (o.status === 'fila' && !o.washerId) actions = '<button class="btn primary sm" data-act="claim" data-id="' + o.id + '">' + icon('play', 13) + 'Assumir e iniciar</button>';
     else if (o.status === 'fila' && mine) actions = '<button class="btn primary sm" data-act="start" data-id="' + o.id + '">' + icon('play', 13) + 'Iniciar lavagem</button>';
     else if (o.status === 'lavagem' && mine) actions = '<button class="btn primary sm" data-act="sendqa" data-id="' + o.id + '">' + icon('shield', 13) + 'Finalizar e enviar ao QA</button>';
+    if (mine && ['fila','lavagem'].includes(o.status)) actions += '<button class="btn sm ghost" data-act="cancel-own-order" data-id="' + o.id + '">Cancelar</button>';
     else if (o.status === 'qa' && mine) actions = '<span class="pill qa" style="flex:1;justify-content:center">Aguardando conferência do supervisor</span>';
     else if (o.status === 'pronto' && mine) actions = '<span class="pill pronto" style="flex:1;justify-content:center">Aprovado — liberar para o cliente</span>';
     if (!actions) return '';
@@ -797,6 +798,8 @@
     const mine = s.orders.filter((o) => o.washerId === session.washerId && ['fila', 'lavagem', 'qa', 'pronto'].includes(o.status))
       .sort((a, b) => (b.priority - a.priority) || (a.createdAt - b.createdAt));
     const free = s.orders.filter((o) => o.status === 'fila' && !o.washerId).sort((a, b) => a.createdAt - b.createdAt);
+    const vehicleOpts = s.vehicles.slice().sort((a,b) => a.plate.localeCompare(b.plate)).map((v) => '<option value="' + v.id + '">' + esc(v.plate) + ' — ' + esc(v.model) + '</option>').join('');
+    const serviceOpts = s.settings.services.map((sv) => '<label class="check"><input type="checkbox" name="services" value="' + sv.id + '"><span style="flex:1"><b>' + esc(sv.name) + '</b><br><span class="small muted">' + WF.durMin(sv.duration) + ' · ' + WF.money(sv.price) + '</span></span></label>').join('');
     return pageHead('App do lavador', 'Olá, ' + esc((w ? w.name : session.name).split(' ')[0]) + '!',
       'Suas lavagens do dia · ' + (w ? w.shift : '') + ' · ' + d.count + ' concluída(s)',
       '<button class="btn primary" data-act="scan">' + icon('camera', 15) + 'Ler placa</button>') +
@@ -811,6 +814,9 @@
       '</div>' +
       '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Fila disponível</h3><span class="muted small">' + free.length + ' sem lavador</span></div>' +
         (free.length ? free.map(washerOrderCard).join('') : '<div class="empty">Toda a fila já tem responsável.</div>') +
+      '</div>' +
+      '<div class="card" style="margin-top:12px"><div class="card-head"><h3>Lançar serviço</h3><span class="muted small">A ordem ficará atribuída a você</span></div>' +
+        (vehicleOpts && serviceOpts ? '<form data-form="washer-order"><div class="field"><label>Veículo</label><select class="input" name="vehicleId" required>' + vehicleOpts + '</select></div><div class="section-title">Serviços</div><div class="form-grid two">' + serviceOpts + '</div><div class="field" style="margin-top:10px"><label>Observações</label><textarea class="input" name="notes" placeholder="Observações sobre esta lavagem"></textarea></div><div class="form-actions"><button class="btn primary" type="submit">Abrir lavagem</button></div></form>' : '<div class="empty">Cadastre veículos e serviços com o administrador antes de lançar uma lavagem.</div>') +
       '</div>';
   }
 
@@ -1365,9 +1371,17 @@
       }
       case 'claim': {
         const o = WF.orderById(id);
+        if (!o || o.status !== 'fila' || o.washerId) { toast('Esta ordem já foi assumida. Atualize a tela.', 'err'); break; }
         WF.assignWasher(id, WF.state.session.washerId);
         const r = WF.startOrder(id);
         if (r.ok) { toast('Você assumiu ' + (o ? o.plate : 'a ordem') + '.', 'ok'); render(); }
+        break;
+      }
+      case 'cancel-own-order': {
+        const o = WF.orderById(id);
+        if (!o || o.washerId !== WF.state.session.washerId || !['fila','lavagem'].includes(o.status)) { toast('Você não pode cancelar esta ordem.', 'err'); break; }
+        const r = WF.cancelOrder(id, 'Cancelada pelo lavador');
+        if (r.ok) { toast('Ordem cancelada.', 'ok'); render(); } else toast(r.error || 'Não foi possível cancelar.', 'err');
         break;
       }
       case 'assign': openAssign(id); break;
@@ -1590,6 +1604,13 @@
       toast('Lavagem ' + r.order.code + ' aberta para ' + r.order.plate + '.', 'ok');
       return;
     }
+    if (kind === 'washer-order') {
+      const services = fd.getAll('services');
+      if (!services.length) { toast('Selecione pelo menos um serviço.', 'err'); return; }
+      const r = WF.createOrder({vehicleId: fd.get('vehicleId'), serviceIds: services, washerId: WF.state.session.washerId, notes: fd.get('notes') || '', status: 'lavagem'});
+      if (!r.ok) { toast(r.error, 'err'); return; }
+      render(); toast('Lavagem ' + r.order.code + ' lançada e iniciada.', 'ok'); return;
+    }
     if (kind === 'vehicle') {
       const r = WF.saveVehicle({
         id: fd.get('id') || undefined,
@@ -1642,6 +1663,7 @@
       return;
     }
     if (kind === 'service') {
+      if (WF.state.session && WF.state.session.role === 'washer') { toast('Somente o administrador pode cadastrar serviços.', 'err'); return; }
       WF.state.settings.services.push({
         id: WF.uid('svc'),
         name: String(fd.get('name')).trim(),
@@ -1652,6 +1674,7 @@
       return;
     }
     if (kind === 'services') {
+      if (WF.state.session && WF.state.session.role === 'washer') { toast('Somente o administrador pode editar serviços.', 'err'); return; }
       WF.state.settings.services.forEach((sv) => {
         const n = form.querySelector('[name="name__' + sv.id + '"]');
         const d = form.querySelector('[name="time__' + sv.id + '"]');

@@ -1,12 +1,12 @@
 /* WASHFLOW PRO — service worker (offline-first) */
-const CACHE = 'washflow-pro-v1.1.5';
+const CACHE = 'washflow-pro-v1.1.6';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './assets/app.css?v=1.1.5',
-  './assets/core.js?v=1.1.5',
-  './assets/app.js?v=1.1.5',
+  './assets/app.css?v=1.1.6',
+  './assets/core.js?v=1.1.6',
+  './assets/app.js?v=1.1.6',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
   './assets/icons/maskable-512.png'

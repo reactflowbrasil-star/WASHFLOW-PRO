@@ -7,7 +7,7 @@ window.WF = (function () {
 
   const STORE_KEY = 'washflow.pro.v1';
   const APP_NAME = 'WASHFLOW PRO';
-  const APP_VERSION = '1.1.5';
+  const APP_VERSION = '1.1.6';
   const DATA_VERSION = 1;
   const MIN = 60000;
   const DAY = 86400000;
