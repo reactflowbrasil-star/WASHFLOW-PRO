@@ -6,6 +6,11 @@
 <meta name="theme-color" content="#0b1220" />
 <meta name="description" content="WASHFLOW PRO — gestão inteligente de lavajatos: frota, fila de lavagem, QA, financeiro e app do lavador." />
 <title>WASHFLOW PRO — Gestão de Lavajatos</title>
+<script>
+  const appBase = document.createElement('base');
+  appBase.href = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
+  document.head.append(appBase);
+</script>
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="assets/icons/icon-192.png" sizes="192x192" />
 <link rel="apple-touch-icon" href="assets/icons/icon-192.png" />
@@ -13,7 +18,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-title" content="WASHFLOW" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<link rel="stylesheet" href="assets/app.css?v=1.1.5" />
+<link rel="stylesheet" href="assets/app.css?v=1.1.7" />
 </head>
 <body>
 <div id="app" class="app-root"></div>
@@ -22,7 +27,9 @@
 <input id="file-import" type="file" accept="application/json,.json" hidden />
 <input id="file-photo" type="file" accept="image/*" capture="environment" hidden />
 <noscript><p style="padding:24px;font-family:sans-serif">Ative o JavaScript para usar o WASHFLOW PRO.</p></noscript>
-<script src="assets/core.js?v=1.1.5"></script>
-<script src="assets/app.js?v=1.1.5"></script>
+<script src="supabase-config.js?v=1.1.7"></script>
+<script src="assets/supabase.js?v=1.1.7"></script>
+<script src="assets/core.js?v=1.1.7"></script>
+<script src="assets/app.js?v=1.1.7"></script>
 </body>
 </html>
