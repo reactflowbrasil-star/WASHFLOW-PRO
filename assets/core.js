@@ -1,6 +1,21 @@
 /* ============================================================
    WASHFLOW PRO — núcleo de dados e regras de negócio
-   Tudo é salvo no aparelho (localStorage). Funciona offline.
+   Persistência na nuvem via Supabase (país público anônimo).
+   Requisitos de preparo no Supabase (sem ações no app):
+
+   1) GRANT SELECT/INSERT/UPDATE/DELETE ON public.vehicles,
+      public.wash_queue, public.services TO anon;
+   2) CREATE POLICY ... ON vehicles FOR SELECT USING (true);
+   3) CREATE POLICY ... ON wash_queue FOR SELECT USING (true);
+   4) CREATE FUNCTION washflow_create_wash(...) RETURNS void
+      SECURITY DEFINER ...;  (veja migrations/washflow_create_wash.sql)
+   5) ALTER FUNCTION washflow_create_wash OWNER TO supabase_admin;
+   6) ALTER PUBLICATION supabase_realtime ADD TABLE wash_queue;
+   7)sites> Expor serviços via função supabase_realtime.sql (ou tabela
+      public.services visível com GRANT para anon).
+
+   Não exponha api_key/service_role: o app usa apenas a chave
+   public.sb_publishable_* via CDN do supabase-js.
    ============================================================ */
 window.WF = (function () {
   'use strict';
@@ -8,7 +23,7 @@ window.WF = (function () {
   const STORE_KEY = 'washflow.pro.v1';
   const APP_NAME = 'WASHFLOW PRO';
   const APP_VERSION = '1.1.5';
-  const DATA_VERSION = 1;
+  const DATA_VERSION = 2; // 2 = salvo no Supabase
   const MIN = 60000;
   const DAY = 86400000;
 
@@ -67,7 +82,7 @@ window.WF = (function () {
     return palette[hashCode(name) % palette.length];
   }
   function escapeHtml(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    return String(s == null ? '' : s).replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
   /* ---------------- domínio ---------------- */
@@ -116,204 +131,97 @@ window.WF = (function () {
   /* ---------------- estado ---------------- */
   let state = null;
 
-  function defaultSettings() {
-    return {
-      shopName: 'Lava-Jato Império',
-      phone: '(11) 99999-0000',
-      address: 'Av. das Águas, 1200 — São Paulo/SP',
-      goalDaily: 1800,
-      openTime: '08:00',
-      closeTime: '18:00',
-      theme: 'dark',
-      qaMin: QA_MIN,
-      notifyPush: false,
-      services: [
-        { id: 'simples', name: 'Lavagem Simples', price: 40, duration: 25 },
-        { id: 'completa', name: 'Lavagem Completa', price: 70, duration: 45 },
-        { id: 'premium', name: 'Lavagem Premium + Cera', price: 110, duration: 70 },
-        { id: 'higienizacao', name: 'Higienização Interna', price: 150, duration: 90 },
-        { id: 'polimento', name: 'Polimento Técnico', price: 350, duration: 180 },
-        { id: 'moto', name: 'Lavagem de Moto', price: 30, duration: 20 },
-        { id: 'cera', name: 'Enceramento Extra', price: 60, duration: 30 }
-      ]
-    };
-  }
+  /* ---------------- Supabase (anônimo) ---------------- */
+  // Chave pública dispensada no cliente (Não suba a service_role).
+  // O demo usa o schema sandbox do Supabase já exposto:
+  //   PUBLIC_URL = https://jydfixapygcdlzziboxt.supabase.co
+  //   PUBLIC_KEY = sb_publishable_NoY2nXVTM17rHEtxUfmG-g_aeZu2smd
+  const PUBLIC_URL = 'https://jydfixapygcdlzziboxt.supabase.co';
+  const PUBLIC_KEY = 'sb_publishable_NoY2nXVTM17rHEtxUfmG-g_aeZu2smd';
 
-  function seed() {
-    const t = Date.now();
-    const services = defaultSettings().services;
-    const ago = (d, h, m) => t - ((d * 24 + h) * 60 + (m || 0)) * MIN;
-    const todayStart = startOfDay(t);
-    const at = (daysAgo, hour, minute) => todayStart - daysAgo * DAY + hour * 3600000 + (minute || 0) * MIN;
+  let supabase = null;
 
-    const washers = [
-      { id: 'w_carlos', name: 'Carlos Menezes', phone: '(11) 98888-1010', pin: '1111', commission: 25, shift: 'Manhã', active: true, hiredAt: ago(400, 0) },
-      { id: 'w_rafael', name: 'Rafael Duarte', phone: '(11) 98888-2020', pin: '2222', commission: 22, shift: 'Tarde', active: true, hiredAt: ago(220, 0) },
-      { id: 'w_juliana', name: 'Juliana Prado', phone: '(11) 98888-3030', pin: '3333', commission: 28, shift: 'Integral', active: true, hiredAt: ago(120, 0) },
-      { id: 'w_diego', name: 'Diego Alves', phone: '(11) 98888-4040', pin: '4444', commission: 20, shift: 'Manhã', active: true, hiredAt: ago(60, 0) },
-      { id: 'w_marcos', name: 'Marcos Lima', phone: '(11) 98888-5050', pin: '5555', commission: 24, shift: 'Tarde', active: false, hiredAt: ago(300, 0) }
-    ];
-
-    const vehicles = [
-      { id: 'v1', plate: 'BRA2E19', model: 'Jeep Compass', color: 'Branco', type: 'SUV', customer: 'Ana Ribeiro', phone: '(11) 97777-1111', plan: 'mensal', planDue: at(-6, 12), notes: 'Não usar cera no parachoque.' },
-      { id: 'v2', plate: 'RIO4A82', model: 'Toyota Corolla', color: 'Prata', type: 'Sedã', customer: 'Eduardo Nunes', phone: '(11) 97777-2222', plan: 'mensal', planDue: at(-18, 12), notes: '' },
-      { id: 'v3', plate: 'FGH7C31', model: 'VW Gol', color: 'Vermelho', type: 'Hatch', customer: 'Patrícia Gomes', phone: '(11) 97777-3333', plan: 'avulso', planDue: null, notes: '' },
-      { id: 'v4', plate: 'JKL9B77', model: 'Fiat Toro', color: 'Cinza', type: 'Picape', customer: 'Rodrigo Salles', phone: '(11) 97777-4444', plan: 'mensal', planDue: at(-2, 12), notes: 'Caçamba sempre com areia.' },
-      { id: 'v5', plate: 'MNO1D45', model: 'Hyundai HB20', color: 'Azul', type: 'Hatch', customer: 'Fernanda Lopes', phone: '(11) 97777-5555', plan: 'avulso', planDue: null, notes: '' },
-      { id: 'v6', plate: 'PQR5F23', model: 'Honda Civic', color: 'Preto', type: 'Sedã', customer: 'Marcelo Tavares', phone: '(11) 97777-6666', plan: 'mensal', planDue: at(-11, 12), notes: 'Cliente VIP — prioridade.' },
-      { id: 'v7', plate: 'STU8G90', model: 'Renault Kwid', color: 'Laranja', type: 'Hatch', customer: 'Bruna Costa', phone: '(11) 97777-7777', plan: 'avulso', planDue: null, notes: '' },
-      { id: 'v8', plate: 'VWX2H56', model: 'Chevrolet S10', color: 'Branco', type: 'Picape', customer: 'Oficina Prime', phone: '(11) 3333-8080', plan: 'mensal', planDue: at(-4, 12), notes: 'Frota da oficina — nota fiscal.' },
-      { id: 'v9', plate: 'YZA3I78', model: 'Yamaha Factor', color: 'Vermelha', type: 'Moto', customer: 'Lucas Pereira', phone: '(11) 97777-9999', plan: 'avulso', planDue: null, notes: '' },
-      { id: 'v10', plate: 'BCD6J12', model: 'Fiat Uno', color: 'Branco', type: 'Hatch', customer: 'Sandra Vieira', phone: '(11) 96666-1212', plan: 'avulso', planDue: null, notes: '' },
-      { id: 'v11', plate: 'EFG4K34', model: 'Toyota Hilux', color: 'Prata', type: 'Picape', customer: 'Construtora Vale', phone: '(11) 3344-9090', plan: 'mensal', planDue: at(-26, 12), notes: 'Lavagem de chassi inclusa.' },
-      { id: 'v12', plate: 'HIJ7L89', model: 'Nissan Kicks', color: 'Cinza', type: 'SUV', customer: 'Camila Ferraz', phone: '(11) 96666-3434', plan: 'avulso', planDue: null, notes: '' }
-    ];
-
-    let seq = 1000;
-    const orders = [];
-    function mkOrder(o) {
-      const veh = vehicles.find((v) => v.id === o.vehicleId);
-      const svc = services.filter((s) => (o.serviceIds || []).includes(s.id));
-      seq += 1;
-      const listPrice = svc.reduce((a, s) => a + s.price, 0);
-      const price = o.price != null ? o.price : listPrice;
-      return {
-        id: uid('os'),
-        code: '#' + seq,
-        vehicleId: veh.id,
-        plate: veh.plate,
-        serviceIds: svc.map((s) => s.id),
-        price,
-        listPrice,
-        washerId: o.washerId || null,
-        status: o.status,
-        priority: !!o.priority,
-        createdAt: o.createdAt,
-        startedAt: o.startedAt || null,
-        finishedAt: o.finishedAt || null,
-        deliveredAt: o.deliveredAt || null,
-        qa: o.qa || { score: null, items: {}, notes: '', reviewedAt: null, attempts: 0 },
-        payment: o.payment || { method: null, status: 'pendente', paidAt: null },
-        notes: o.notes || '',
-        photos: o.photos || [],
-        plan: veh.plan
-      };
-    }
-
-    // hoje — fila
-    orders.push(mkOrder({ vehicleId: 'v1', serviceIds: ['completa'], washerId: null, status: 'fila', createdAt: ago(0, 0, 78), priority: true }));
-    orders.push(mkOrder({ vehicleId: 'v3', serviceIds: ['simples'], washerId: null, status: 'fila', createdAt: ago(0, 0, 52) }));
-    orders.push(mkOrder({ vehicleId: 'v7', serviceIds: ['simples', 'cera'], washerId: null, status: 'fila', createdAt: ago(0, 0, 34) }));
-    orders.push(mkOrder({ vehicleId: 'v10', serviceIds: ['completa'], washerId: null, status: 'fila', createdAt: ago(0, 0, 11) }));
-    // em lavagem
-    orders.push(mkOrder({ vehicleId: 'v2', serviceIds: ['premium'], washerId: 'w_carlos', status: 'lavagem', createdAt: ago(0, 1, 20), startedAt: ago(0, 0, 46) }));
-    orders.push(mkOrder({ vehicleId: 'v5', serviceIds: ['completa'], washerId: 'w_juliana', status: 'lavagem', createdAt: ago(0, 0, 58), startedAt: ago(0, 0, 27) }));
-    orders.push(mkOrder({ vehicleId: 'v9', serviceIds: ['moto'], washerId: 'w_diego', status: 'lavagem', createdAt: ago(0, 0, 40), startedAt: ago(0, 0, 9) }));
-    // QA
-    orders.push(mkOrder({ vehicleId: 'v6', serviceIds: ['premium', 'higienizacao'], washerId: 'w_carlos', status: 'qa', createdAt: ago(0, 2, 10), startedAt: ago(0, 1, 55), finishedAt: ago(0, 0, 24), qa: { score: null, items: {}, notes: '', reviewedAt: null, attempts: 0 } }));
-    orders.push(mkOrder({ vehicleId: 'v4', serviceIds: ['completa'], washerId: 'w_rafael', status: 'qa', createdAt: ago(0, 1, 40), startedAt: ago(0, 1, 15), finishedAt: ago(0, 0, 8), qa: { score: null, items: {}, notes: '', reviewedAt: null, attempts: 0 } }));
-    // pronto
-    orders.push(mkOrder({ vehicleId: 'v8', serviceIds: ['completa', 'cera'], washerId: 'w_juliana', status: 'pronto', createdAt: ago(0, 2, 40), startedAt: ago(0, 2, 5), finishedAt: ago(0, 0, 31), qa: { score: 100, items: {}, notes: 'Aprovado sem ressalvas.', reviewedAt: ago(0, 0, 28), attempts: 0 } }));
-    // entregues hoje
-    orders.push(mkOrder({ vehicleId: 'v11', serviceIds: ['polimento'], washerId: 'w_rafael', status: 'entregue', createdAt: ago(0, 4, 30), startedAt: ago(0, 4, 10), finishedAt: ago(0, 1, 20), deliveredAt: ago(0, 1, 5), qa: { score: 91, items: {}, notes: '', reviewedAt: ago(0, 1, 12), attempts: 0 }, payment: { method: 'pix', status: 'pago', paidAt: ago(0, 1, 5) } }));
-    orders.push(mkOrder({ vehicleId: 'v12', serviceIds: ['completa'], washerId: 'w_diego', status: 'entregue', createdAt: ago(0, 3, 15), startedAt: ago(0, 2, 55), finishedAt: ago(0, 2, 15), deliveredAt: ago(0, 2, 0), qa: { score: 88, items: {}, notes: '', reviewedAt: ago(0, 2, 8), attempts: 0 }, payment: { method: 'credito', status: 'pago', paidAt: ago(0, 2, 0) } }));
-    orders.push(mkOrder({ vehicleId: 'v1', serviceIds: ['simples'], washerId: 'w_carlos', status: 'entregue', createdAt: ago(0, 5, 10), startedAt: ago(0, 5, 0), finishedAt: ago(0, 4, 35), deliveredAt: ago(0, 4, 30), qa: { score: 100, items: {}, notes: '', reviewedAt: ago(0, 4, 38), attempts: 0 }, payment: { method: 'mensalidade', status: 'pago', paidAt: ago(0, 4, 30) }, price: 0 }));
-
-    // histórico dos últimos 6 dias
-    const planPool = [
-      ['v3', ['simples'], 'dinheiro'], ['v5', ['completa'], 'pix'], ['v7', ['simples', 'cera'], 'debito'],
-      ['v10', ['completa'], 'pix'], ['v12', ['premium'], 'credito'], ['v2', ['premium'], 'mensalidade'],
-      ['v4', ['completa'], 'pix'], ['v9', ['moto'], 'dinheiro'], ['v6', ['higienizacao'], 'credito']
-    ];
-    const washerPool = ['w_carlos', 'w_rafael', 'w_juliana', 'w_diego'];
-    for (let d = 1; d <= 6; d++) {
-      const count = 4 + ((d * 3) % 4);
-      for (let i = 0; i < count; i++) {
-        const pick = planPool[(d * 5 + i * 3) % planPool.length];
-        const veh = vehicles.find((v) => v.id === pick[0]);
-        const start = at(d, 8 + ((i * 2) % 8), (i * 13) % 59);
-        const price = veh.plan === 'mensal' ? 0 : services.filter((s) => pick[1].includes(s.id)).reduce((a, s) => a + s.price, 0);
-        orders.push(mkOrder({
-          vehicleId: veh.id, serviceIds: pick[1], washerId: washerPool[(d + i) % washerPool.length], status: 'entregue',
-          createdAt: start, startedAt: start + 10 * MIN, finishedAt: start + 50 * MIN, deliveredAt: start + 55 * MIN,
-          qa: { score: 82 + ((i * 7 + d * 5) % 19), items: {}, notes: '', reviewedAt: start + 52 * MIN, attempts: 0 },
-          payment: { method: pick[2], status: 'pago', paidAt: start + 55 * MIN }, price
-        }));
+  function initSupabase() {
+    if (supabase) return supabase;
+    try {
+      const { createClient } = window['supabase-js'] || {};
+      // Fallback para CDN <script> supabase-js, via defer
+      if (typeof createClient === 'function') {
+        supabase = createClient(PUBLIC_URL, PUBLIC_KEY, { global: { fetch } });
+      } else {
+        // Carrega via script inline só caso necessário (não executado em produção
+        // normal, onde o script <script src="..."> já deve estar presente).
+        console.warn('supabase-js não carregado; usará dados locais/demo.');
       }
+    } catch (e) {
+      console.warn('initSupabase falhou', e);
     }
-
-    const expenses = [
-      { id: uid('exp'), description: 'Shampoo automotivo 5L', amount: 189.9, category: 'Produtos e insumos', date: ago(0, 8), notes: 'Compra no distribuidor' },
-      { id: uid('exp'), description: 'Cera líquida 2 galões', amount: 240, category: 'Produtos e insumos', date: ago(1, 7) },
-      { id: uid('exp'), description: 'Conta de água', amount: 320.5, category: 'Água e energia', date: ago(2, 6) },
-      { id: uid('exp'), description: 'Manutenção da lavadora', amount: 450, category: 'Manutenção', date: ago(4, 9) },
-      { id: uid('exp'), description: 'Panfletos e adesivos', amount: 120, category: 'Marketing', date: ago(5, 5) },
-      { id: uid('exp'), description: 'Aluguel do galpão', amount: 2400, category: 'Aluguel', date: ago(6, 4) }
-    ];
-
-    return {
-      dataVersion: DATA_VERSION,
-      app: APP_NAME,
-      settings: defaultSettings(),
-      vehicles,
-      washers,
-      orders,
-      expenses,
-      alerts: [],
-      session: null,
-      createdAt: t,
-      updatedAt: t
-    };
+    return supabase;
   }
 
-  function migrate(s) {
-    if (!s || typeof s !== 'object') return seed();
-    s.settings = Object.assign(defaultSettings(), s.settings || {});
-    if (!Array.isArray(s.settings.services) || !s.settings.services.length) s.settings.services = defaultSettings().services;
-    s.vehicles = Array.isArray(s.vehicles) ? s.vehicles : [];
-    s.washers = Array.isArray(s.washers) ? s.washers : [];
-    s.orders = Array.isArray(s.orders) ? s.orders : [];
-    s.expenses = Array.isArray(s.expenses) ? s.expenses : [];
-    s.alerts = Array.isArray(s.alerts) ? s.alerts : [];
-    s.orders.forEach((o) => {
-      o.qa = Object.assign({ score: null, items: {}, notes: '', reviewedAt: null, attempts: 0 }, o.qa || {});
-      o.payment = Object.assign({ method: null, status: 'pendente', paidAt: null }, o.payment || {});
-      if (!Array.isArray(o.photos)) o.photos = [];
-      if (!Array.isArray(o.serviceIds)) o.serviceIds = [];
-      if (o.listPrice == null) {
-        o.listPrice = (o.serviceIds || []).reduce((a, id) => a + ((s.settings.services.find((x) => x.id === id) || {}).price || 0), 0) || o.price || 0;
-      }
-    });
-    s.washers.forEach((w) => { if (!w.pin) w.pin = String(1000 + (hashCode(w.name) % 9000)); });
-    if (!s.session) s.session = null;
-    return s;
+  function supabaseReady() { return !!supabase; }
+
+  function supabaseError(err) {
+    if (err && err.message) return err.message;
+    if (err && err.detail) return err.detail;
+    return String(err || 'erro de conexão com Supabase');
   }
 
+  /* ---------------- carregamento inicial ---------------- */
   function load() {
     if (state) return state;
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      state = raw ? migrate(JSON.parse(raw)) : seed();
-    } catch (e) {
-      console.warn('Falha ao carregar dados, iniciando demo.', e);
-      state = seed();
+    const client = initSupabase();
+    if (client) {
+      const { data, error } = client
+        .from('sites')
+        .select('*')
+        .limit(1);
+      if (!error) {
+        if (data && data.length) {
+          state = migrate(data[0]);
+          return state;
+        }
+      } else {
+        console.warn('Nenhum dado encontrado no Supabase; mostrando demo.', error);
+      }
     }
-    if (!localStorage.getItem(STORE_KEY)) save();
+    // Demo/offline
+    state = seed();
     return state;
   }
+
+  /* ---------------- persistência ---------------- */
   function save() {
     if (!state) return;
     state.updatedAt = Date.now();
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-      return true;
-    } catch (e) {
-      console.warn('Falha ao salvar', e);
-      return false;
+    const client = initSupabase();
+    if (client) {
+      const { error } = client.from('sites').insert(state).eq('id', state.id).select();
+      if (error) console.warn('save Supabase falhou', error);
     }
   }
+
+  function persistWash(v) {
+    const client = initSupabase();
+    if (!client) return { ok: false, error: 'Supabase não disponível' };
+    const payload = {
+      vehicle_id: v.vehicleId || v.vehicle_id,
+      service_ids: v.serviceIds,
+      status: 'lavagem',
+      started_at: v.startedAt || null,
+      created_at: new Date().toISOString(),
+      notes: v.notes || ''
+    };
+    const { error } = client.from('wash_queue').insert(payload).select();
+    if (error) {
+      console.warn('persistWash Supabase falhou', error);
+      return { ok: false, error: supabaseError(error) };
+    }
+    return { ok: true };
+  }
+
   function reset() { state = seed(); save(); return state; }
-  // mantém abas abertas em sincronia quando outra aba salva
+
   function refreshFromStorage() {
     try {
       const raw = localStorage.getItem(STORE_KEY);
@@ -818,97 +726,57 @@ window.WF = (function () {
     return {
       app: APP_NAME,
       dataVersion: DATA_VERSION,
-      version: APP_VERSION,
-      exportedAt: new Date().toISOString(),
-      counts: {
-        vehicles: state.vehicles.length, washers: state.washers.length,
-        orders: state.orders.length, expenses: state.expenses.length, alerts: state.alerts.length
-      },
-      data: {
-        settings: state.settings,
-        vehicles: state.vehicles,
-        washers: state.washers,
-        orders: state.orders,
-        expenses: state.expenses,
-        alerts: state.alerts
-      }
+      settings: state.settings || defaultSettings(),
+      vehicles: state.vehicles || [],
+      washers: state.washers || [],
+      orders: state.orders || [],
+      expenses: state.expenses || [],
+      alerts: state.alerts || [],
+      updatedAt: state.updatedAt || Date.now()
     };
   }
   function exportBackupString() { return JSON.stringify(backupPayload(), null, 2); }
-
-  function importBackup(text, mode = 'replace') {
-    let parsed;
-    try { parsed = JSON.parse(text); } catch (e) { return { ok: false, error: 'Arquivo inválido: não é um JSON de backup.' }; }
-    const data = parsed && parsed.data ? parsed.data : parsed;
-    if (!data || !Array.isArray(data.vehicles) || !Array.isArray(data.orders)) {
-      return { ok: false, error: 'Backup incompatível: faltam veículos ou ordens de serviço.' };
-    }
+  function importBackup(text, mode) {
+    let preview;
+    try { preview = JSON.parse(text); } catch (e) { return { ok: false, error: 'Arquivo inválido: não é um backup JSON.' }; }
+    const d = preview && preview.data ? preview.data : preview;
+    if (!d || !Array.isArray(d.vehicles) || !Array.isArray(d.orders)) return { ok: false, error: 'Backup incompatível com o WASHFLOW PRO.' };
+    const before = { vehicles: state.vehicles.length, orders: state.orders.length, washers: state.washers.length, expenses: state.expenses.length };
     if (mode === 'merge') {
-      const vIds = new Set(state.vehicles.map((v) => v.id));
-      const oIds = new Set(state.orders.map((o) => o.id));
-      const wIds = new Set(state.washers.map((w) => w.id));
-      const eIds = new Set(state.expenses.map((e) => e.id));
-      (data.vehicles || []).forEach((v) => { if (!vIds.has(v.id)) state.vehicles.push(v); });
-      (data.washers || []).forEach((w) => { if (!wIds.has(w.id)) state.washers.push(w); });
-      (data.orders || []).forEach((o) => { if (!oIds.has(o.id)) state.orders.push(o); });
-      (data.expenses || []).forEach((e) => { if (!eIds.has(e.id)) state.expenses.push(e); });
-      if (data.settings) state.settings = Object.assign(state.settings, data.settings);
+      d.vehicles.forEach((v) => { if (!vehicleById(v.id)) state.vehicles.push(v); });
+      d.washers.forEach((w) => { if (!washerById(w.id)) state.washers.push(w); });
+      d.orders.forEach((o) => { if (!orderById(o.id)) state.orders.push(o); });
+      d.expenses.forEach((e) => { if (!state.expenses.find((x) => x.id === e.id)) state.expenses.push(e); });
     } else {
-      state.settings = Object.assign(defaultSettings(), data.settings || {});
-      state.vehicles = data.vehicles;
-      state.washers = Array.isArray(data.washers) ? data.washers : state.washers;
-      state.orders = data.orders;
-      state.expenses = Array.isArray(data.expenses) ? data.expenses : [];
-      state.alerts = Array.isArray(data.alerts) ? data.alerts : [];
-      state.session = null;
+      state.vehicles = d.vehicles || [];
+      state.washers = d.washers || [];
+      state.orders = d.orders || [];
+      state.expenses = d.expenses || [];
     }
-    state = migrate(state);
     save();
-    return {
-      ok: true,
-      summary: {
-        vehicles: state.vehicles.length, washers: state.washers.length,
-        orders: state.orders.length, expenses: state.expenses.length
-      }
-    };
+    return { ok: true, summary: { vehicles: state.vehicles.length, orders: state.orders.length, washers: state.washers.length, expenses: state.expenses.length, before } };
   }
 
-  function csvEscape(v) {
-    const s = String(v == null ? '' : v);
-    return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  function ordersCSV() {
+    return toCSV(['Data', 'Código', 'Placa', 'Serviços', 'Lavador', 'Status', 'Valor'],
+      state.orders.map((e) => [fmtDate(e.createdAt), e.code, e.plate, serviceNames(e), (washerById(e.washerId) || {}).name || '—', e.status, (e.plan === 'mensal' ? 'Plano' : money(e.price))]).join('\n'));
   }
-  function toCSV(headers, rows) {
-    return '\uFEFF' + [headers.join(';')].concat(rows.map((r) => r.map(csvEscape).join(';'))).join('\r\n');
-  }
-  function ordersCSV(key) {
-    const { from, to } = periodRange(key || 'mes');
-    const list = state.orders.filter((o) => o.createdAt >= from && o.createdAt < to).sort((a, b) => b.createdAt - a.createdAt);
-    return toCSV(
-      ['OS', 'Data', 'Placa', 'Veículo', 'Cliente', 'Serviços', 'Lavador', 'Status', 'Valor', 'Pagamento', 'QA'],
-      list.map((o) => {
-        const v = vehicleById(o.vehicleId) || {};
-        return [o.code, fmtDateTime(o.createdAt), o.plate, v.model || '', v.customer || '', serviceNames(o),
-          (washerById(o.washerId) || {}).name || '', (STATUS[o.status] || {}).label || o.status,
-          (o.price || 0).toFixed(2).replace('.', ','), (PAYMENTS.find((p) => p.id === o.payment.method) || {}).label || '',
-          o.qa && o.qa.score != null ? o.qa.score : ''];
-      })
-    );
-  }
-  function expensesCSV(key) {
-    const { from, to } = periodRange(key || 'mes');
-    const list = state.expenses.filter((e) => e.date >= from && e.date < to);
+  function expensesCSV() {
     return toCSV(['Data', 'Descrição', 'Categoria', 'Valor', 'Observação'],
-      list.map((e) => [fmtDate(e.date), e.description, e.category, e.amount.toFixed(2).replace('.', ','), e.notes || '']));
+      state.expenses.map((e) => [fmtDate(e.date), e.description, e.category, money(e.amount), e.notes || '']).join('\n'));
   }
   function washersCSV() {
     return toCSV(['Nome', 'Telefone', 'PIN', 'Comissão %', 'Turno', 'Ativo', 'Lavagens hoje', 'Comissão hoje', 'Nota QA média'],
       state.washers.map((w) => {
         const d = washerOfDay(w.id);
-        return [w.name, w.phone, w.pin, w.commission, w.shift, w.active ? 'Sim' : 'Não', d.count, d.commission.toFixed(2).replace('.', ','), d.avgScore == null ? '' : d.avgScore];
-      }));
+        return [w.name, w.phone, w.pin, w.commission, w.shift, w.active ? 'Sim' : 'Não', d.count, d.commission, d.avgScore == null ? '' : d.avgScore];
+      }).join('\n'));
+  }
+  function toCSV(header, list) {
+    const rows = [header].concat(list.map((e) => e.map((c) => '"' + String(c).replace(/"/g, '""') + '"')));
+    return rows.join('\n');
   }
 
-  /* ---------------- PWA ---------------- */
   function isStandalone() {
     return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   }
@@ -916,8 +784,7 @@ window.WF = (function () {
   /* ---------------- API pública ---------------- */
   return {
     STORE_KEY, APP_NAME, APP_VERSION, DATA_VERSION, MIN, DAY, STATUS, CHECKLIST, QA_MIN, PAYMENTS, EXPENSE_CATEGORIES, PERIODS,
-    uid, clamp, round, money, num, fmtDate, fmtTime, fmtDateTime, fmtWeekday, startOfDay, dayKey, relTime, durMin, todayISO,
-    initials, colorFor, escapeHtml, normalizePlate, plateValid, plateKind,
+    uid, clamp, round, money, num, pad,
     get state() { return load(); },
     load, save, reset, applyTheme, refreshFromStorage,
     vehicles, washers, orders, services, serviceById, vehicleById, washerById, orderById, vehicleByPlate, ordersByVehicle, activeOrders,
@@ -929,6 +796,10 @@ window.WF = (function () {
     pushAlert, scanAlerts, unreadAlerts, markAlertRead, markAllAlertsRead, clearAlerts, requestPush,
     backupPayload, exportBackupString, importBackup, ordersCSV, expensesCSV, washersCSV, toCSV,
     isStandalone,
+    supabaseReady,
+    initSupabase,
+    persistWash,
+
     loginAdmin(pin) {
       if (String(pin) === '1234') {
         state.session = { role: 'admin', name: 'Administrador', since: Date.now() };

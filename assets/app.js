@@ -1192,6 +1192,7 @@
     }
   }
 
+  // Carrega apenas o cliente anônimo (sem service_role).
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
