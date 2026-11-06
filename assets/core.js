@@ -6,8 +6,9 @@ window.WF = (function () {
   'use strict';
 
   const STORE_KEY = 'washflow.pro.v1';
+  const remote = () => window.WashflowSupabase;
   const APP_NAME = 'WASHFLOW PRO';
-  const APP_VERSION = '1.1.6';
+  const APP_VERSION = '1.1.7';
   const DATA_VERSION = 1;
   const MIN = 60000;
   const DAY = 86400000;
@@ -538,6 +539,9 @@ window.WF = (function () {
     };
     state.orders.unshift(o);
     save();
+    if (remote() && remote().enabled) remote().createWash({ vehicleId: o.vehicleId, serviceIds: o.serviceIds, notes: o.notes, priority: o.priority, status: o.status, washerId: o.washerId })
+      .then((row) => { o.remoteId = row.id; })
+      .catch((err) => console.error('Supabase create wash:', err));
     pushAlert({ type: 'order', level: 'info', key: 'new-' + o.id, title: 'Nova lavagem na fila', message: veh.plate + ' • ' + serviceNames(o) });
     return { ok: true, order: o };
   }
@@ -920,6 +924,16 @@ window.WF = (function () {
     initials, colorFor, escapeHtml, normalizePlate, plateValid, plateKind,
     get state() { return load(); },
     load, save, reset, applyTheme, refreshFromStorage,
+    async connectSupabase() {
+      if (!remote() || !remote().enabled) return { enabled: false };
+      const connection = await remote().initialize();
+      const catalog = await remote().getServices();
+      if (catalog.length) {
+        state.settings.services = catalog.map((s) => ({ id: s.id, name: s.name, price: Number(s.price), duration: s.duration_minutes }));
+        save();
+      }
+      return connection;
+    },
     vehicles, washers, orders, services, serviceById, vehicleById, washerById, orderById, vehicleByPlate, ordersByVehicle, activeOrders,
     planActive, planDaysLeft, serviceNames, serviceDuration, orderValue, orderProgress, estimatedFinish, queueStats, waitEstimate,
     washerLoad, washerOfDay, bestWasherFor,
