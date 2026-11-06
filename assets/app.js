@@ -1728,7 +1728,9 @@
   // start
   WF.load();
   WF.applyTheme();
-  if (WF.connectSupabase) WF.connectSupabase().then((r) => { if (r.enabled) render(); }).catch((e) => console.warn('Supabase indisponível:', e.message));
+  if (WF.connectSupabase) WF.connectSupabase().then((r) => {
+    if (r.enabled) { render(); toast('Catálogo conectado ao Supabase; ordens remotas exigem sessão e cadastros sincronizados.', ''); }
+  }).catch((e) => { console.warn('Supabase indisponível:', e.message); });
   if (!location.hash && WF.state.session) location.hash = WF.state.session.role === 'washer' ? '#/minhas' : '#/dashboard';
   render();
 })();

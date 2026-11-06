@@ -539,9 +539,6 @@ window.WF = (function () {
     };
     state.orders.unshift(o);
     save();
-    if (remote() && remote().enabled) remote().createWash({ vehicleId: o.vehicleId, serviceIds: o.serviceIds, notes: o.notes, priority: o.priority, status: o.status, washerId: o.washerId })
-      .then((row) => { o.remoteId = row.id; })
-      .catch((err) => console.error('Supabase create wash:', err));
     pushAlert({ type: 'order', level: 'info', key: 'new-' + o.id, title: 'Nova lavagem na fila', message: veh.plate + ' • ' + serviceNames(o) });
     return { ok: true, order: o };
   }
