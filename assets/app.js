@@ -283,9 +283,9 @@
       ? '<nav class="bottom-nav">' + WASHER_NAV.map((i) => navItem(i, active(i.id), true)).join('') + '</nav>'
       : '<nav class="bottom-nav">' +
           navItem(ADMIN_NAV[0], active('dashboard'), true) +
-          navItem(ADMIN_NAV[1], active('fila'), true) +
+          navItem(ADMIN_NAV[1], active('fila') || active('frota'), true) +
+          navItem(ADMIN_NAV[2], active('frota'), true) +
           navItem(ADMIN_NAV[3], active('qa'), true) +
-          navItem(ADMIN_NAV[4], active('financeiro'), true) +
           '<button class="nav-item" data-act="menu">' + icon('menu') + '<span>Mais</span></button>' +
         '</nav>';
 

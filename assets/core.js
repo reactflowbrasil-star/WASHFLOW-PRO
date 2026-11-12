@@ -8,7 +8,7 @@ window.WF = (function () {
   const STORE_KEY = 'washflow.pro.v1';
   const remote = () => window.WashflowSupabase;
   const APP_NAME = 'WASHFLOW PRO';
-  const APP_VERSION = '1.1.7';
+  const APP_VERSION = '1.1.8';
   const DATA_VERSION = 1;
   const MIN = 60000;
   const DAY = 86400000;

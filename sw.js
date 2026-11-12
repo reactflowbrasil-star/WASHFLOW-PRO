@@ -1,14 +1,14 @@
 /* WASHFLOW PRO — service worker (offline-first) */
-const CACHE = 'washflow-pro-v1.1.7';
+const CACHE = 'washflow-pro-v1.1.8';
 const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './supabase-config.js?v=1.1.7',
-  './assets/supabase.js?v=1.1.7',
-  './assets/app.css?v=1.1.7',
-  './assets/core.js?v=1.1.7',
-  './assets/app.js?v=1.1.7',
+  './supabase-config.js?v=1.1.8',
+  './assets/supabase.js?v=1.1.8',
+  './assets/app.css?v=1.1.8',
+  './assets/core.js?v=1.1.8',
+  './assets/app.js?v=1.1.8',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
   './assets/icons/maskable-512.png'
